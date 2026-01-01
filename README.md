@@ -194,8 +194,6 @@ Contoh:
 
 ````
 
----
-
 <a id="setup--deployment"></a>
 ### Setup & Deployment
 
@@ -203,11 +201,10 @@ Contoh:
 2. Buat project **Google Apps Script**
 3. Paste seluruh source code bot
 4. Konfigurasi:
-   ```js
+   
    const TOKEN = "BOT_TOKEN";
    const SHEET_NAME = "inventory";
    const ADMIN_CHAT_ID = 123456789;
-````
 
 5. Deploy sebagai **Web App**
 
