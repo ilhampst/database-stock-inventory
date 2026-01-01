@@ -1,0 +1,396 @@
+/********************
+ * CONFIG
+ ********************/
+const TOKEN = "8503041876:AAG2BnQeZ01_RFD0CcB4ial48LyZZc3fII0";
+const SHEET_NAME = "inventory";
+const ADMIN_CHAT_ID = 1766724; // GANTI DENGAN CHAT ID KAMU
+
+/********************
+ * ENTRY POINT
+ ********************/
+function doPost(e) {
+  if (!e || !e.postData) return;
+
+  const data = JSON.parse(e.postData.contents);
+  if (!data.message || !data.message.text) return;
+
+  const text = data.message.text.trim();
+  const chatId = data.message.chat.id;
+
+  if (text.startsWith("/add")) {
+    handleAdd(text, chatId);
+
+  } else if (text.startsWith("/use")) {
+    handleUse(text, chatId);
+
+  } else if (text.startsWith("/stock")) {
+    handleStock(text, chatId);
+
+  } else if (text === "/help") {
+    sendHelp(chatId);
+
+  } else {
+    sendMessage(chatId, "❌ Perintah tidak dikenali. Ketik /help");
+  }
+}
+
+/********************
+ * UTIL
+ ********************/
+function sendMessage(chatId, text) {
+  const url = `https://api.telegram.org/bot${TOKEN}/sendMessage`;
+  UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      parse_mode: "Markdown"
+    })
+  });
+}
+
+function getParam(text, key) {
+  const match = text.match(new RegExp(`${key}:([^ ]+)`));
+  return match ? match[1] : "";
+}
+
+function normalize(str) {
+  return str
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/********************
+ * ADD / UPDATE STOCK
+ ********************/
+function handleAdd(text, chatId) {
+  try {
+    const parts = text.split(" ");
+    if (parts.length < 4) {
+      sendMessage(chatId, "❌ Format:\n/add Nama 2 pcs loc:Lokasi");
+      return;
+    }
+
+    const namaRaw = parts[1].replace(/_/g, " ");
+    const qtyAdd = Number(parts[2]);
+    const satuanRaw = parts[3];
+
+    if (isNaN(qtyAdd) || qtyAdd <= 0) {
+      sendMessage(chatId, "❌ Qty harus angka > 0");
+      return;
+    }
+
+    const lokasiRaw = getParam(text, "loc") || "UNKNOWN";
+    const kategori = getParam(text, "cat") || "OT";
+    const minQty = Number(getParam(text, "min")) || 0;
+    const expire = getParam(text, "exp") || "";
+
+    const namaKey = normalize(namaRaw);
+    const lokasiKey = normalize(lokasiRaw);
+    const satuanKey = normalize(satuanRaw);
+
+    const sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+
+    for (let i = 1; i < data.length; i++) {
+      if (
+        normalize(data[i][1]) === namaKey &&
+        normalize(data[i][3]) === lokasiKey &&
+        normalize(data[i][5]) === satuanKey
+      ) {
+        const newQty = Number(data[i][4]) + qtyAdd;
+        sheet.getRange(i + 1, 5).setValue(newQty);
+
+        sendMessage(chatId, `➕ *Update stok*\n${namaRaw}\nTotal: ${newQty} ${satuanRaw}`);
+        return;
+      }
+    }
+
+    const itemId = `${kategori}-${normalize(lokasiRaw).replace(/ /g, "_")}-${Date.now()}`;
+
+    sheet.appendRow([
+      itemId,
+      namaRaw,
+      kategori,
+      lokasiRaw,
+      qtyAdd,
+      satuanRaw,
+      minQty,
+      expire,
+      ""
+    ]);
+
+    sendMessage(chatId, `✅ *Item baru*\n${namaRaw} (${qtyAdd} ${satuanRaw})`);
+
+  } catch (err) {
+    sendMessage(chatId, `❌ ERROR: ${err.message}`);
+  }
+}
+
+/********************
+ * USE STOCK
+ ********************/
+function handleUse(text, chatId) {
+  try {
+    const parts = text.split(" ");
+    if (parts.length < 3) {
+      sendMessage(chatId, "❌ Format:\n/use ITEM_ID 2");
+      return;
+    }
+
+    const itemId = parts[1];
+    const usedQty = Number(parts[2]);
+    if (isNaN(usedQty) || usedQty <= 0) {
+      sendMessage(chatId, "❌ Qty harus angka > 0");
+      return;
+    }
+
+    const sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === itemId) {
+        const currentQty = Number(data[i][4]);
+        if (currentQty < usedQty) {
+          sendMessage(chatId, "❌ Stok tidak cukup");
+          return;
+        }
+
+        const newQty = currentQty - usedQty;
+        sheet.getRange(i + 1, 5).setValue(newQty);
+
+        sendMessage(chatId, `📉 ${data[i][1]} dipakai ${usedQty}. Sisa ${newQty}`);
+        return;
+      }
+    }
+
+    sendMessage(chatId, "❌ ITEM_ID tidak ditemukan");
+
+  } catch (err) {
+    sendMessage(chatId, `❌ ERROR: ${err.message}`);
+  }
+}
+
+/********************
+ * STOCK VIEW
+ ********************/
+function handleStock(text, chatId) {
+  const parts = text.split(" ").slice(1);
+
+  let kategori = "";
+  let search = "";
+  let showId = false;
+  let expire = false;
+  let low = false;
+  let days = 7;
+
+  for (const p0 of parts) {
+    const p = normalize(p0);
+
+    if (p === "id") showId = true;
+    else if (p === "expire") expire = true;
+    else if (p === "low") low = true;
+    else if (!isNaN(p)) days = Number(p);
+    else if (p.length === 2) kategori = p;
+    else search = p;
+  }
+
+  sendStock(chatId, kategori, showId, expire, low, days, search);
+}
+
+function sendStock(
+  chatId,
+  kategori,
+  showId,
+  expire,
+  low,
+  days,
+  search
+) {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  const today = new Date();
+
+  let title = "📦 *Stok saat ini*";
+  if (expire) title = `⏳ *Stok EXP ≤ ${days} hari*`;
+  if (low) title = "⚠️ *Stok LOW (≤ min)*";
+
+  let msg = `${title}\n\n`;
+  let found = false;
+
+  for (let i = 1; i < data.length; i++) {
+    const [
+      itemId,
+      nama,
+      kat,
+      lokasi,
+      qty,
+      satuan,
+      minQty,
+      exp
+    ] = data[i];
+
+    if (!nama) continue;
+    if (kategori && normalize(kat) !== kategori) continue;
+    if (search && !normalize(nama).includes(search)) continue;
+
+
+    // === LOW MODE (qty < min_qty) ===
+if (low) {
+  if (minQty === "" || minQty === null) continue;
+  if (Number(qty) >= Number(minQty)) continue;
+}
+
+
+    // === EXPIRE MODE ===
+    if (expire) {
+      if (!exp) continue;
+      const diff = Math.ceil((new Date(exp) - today) / 86400000);
+      if (diff > days) continue;
+    }
+
+    found = true;
+    msg += `• *${nama}* : ${qty} ${satuan} (${lokasi})\n`;
+
+    if (low) {
+      msg += `  ⚠️ Min: ${minQty}\n`;
+    }
+
+    if (expire && exp) {
+      const d = Math.ceil((new Date(exp) - today) / 86400000);
+      msg += `  ⏰ ${d} hari\n`;
+    }
+
+    if (showId) {
+      msg += `  _ID: ${itemId}_\n`;
+    }
+  }
+
+  sendMessage(
+    chatId,
+    found ? msg : "ℹ️ Tidak ada stok yang memenuhi kriteria."
+  );
+}
+
+
+/********************
+ * HELP
+ ********************/
+function sendHelp(chatId) {
+  const msg =
+`📘 *Bantuan Bot Stok Rumah*
+
+*1️⃣ Tambah / update stok*
+\`/add <Nama> <qty> <satuan> loc:<Lokasi> cat:<Kategori> min:<min_qty> exp:<YYYY-MM-DD>\`
+
+Contoh:
+\`/add Mie_Goreng 3 pcs loc:Box_transparan cat:FD min:2\`
+→ Jika item sudah ada (nama + lokasi + satuan sama), stok akan *ditambahkan*.
+
+---
+
+*2️⃣ Pakai / kurangi stok*
+\`/use <ITEM_ID> <qty>\`
+
+Contoh:
+\`/use FD-Box_transparan-1766931641809 1\`
+
+---
+
+*3️⃣ Lihat stok*
+\`/stock\`
+→ Semua stok (ringkas)
+
+\`/stock FD\`
+→ Filter kategori (FD, OT)
+
+\`/stock id\`
+→ Tampilkan ITEM_ID
+
+\`/stock FD id\`
+→ Filter kategori + tampilkan ITEM_ID
+
+---
+
+*4️⃣ Cari stok (berdasarkan nama)*
+\`/stock <kata>\`
+→ Cari item berdasarkan nama (case-insensitive)
+
+Contoh:
+\`/stock mie\`
+\`/stock gula\`
+
+Kombinasi:
+\`/stock FD mie\`
+\`/stock mie id\`
+
+---
+
+*5️⃣ Stok hampir habis (LOW)*
+\`/stock low\`
+→ Item dengan \`qty ≤ min_qty\`
+
+Contoh:
+\`/stock low\`
+\`/stock low FD\`
+\`/stock low mie\`
+\`/stock low FD mie id\`
+
+---
+
+*6️⃣ Stok mendekati EXP*
+\`/stock expire\`
+→ Item expired / ≤ 7 hari
+
+\`/stock expire 3\`
+→ ≤ 3 hari
+
+Contoh:
+\`/stock expire FD\`
+\`/stock expire mie id\`
+
+---
+
+*7️⃣ Bantuan*
+\`/help\`
+→ Tampilkan pesan ini
+
+---
+
+📌 *Catatan penting*
+• Gunakan underscore (_) saat input nama & lokasi  
+• ITEM_ID diperlukan untuk perintah \`/use\`  
+• \`min_qty\` menentukan status LOW  
+• Format konsisten = database rapi 👍
+`;
+
+  sendMessage(chatId, msg);
+}
+
+
+
+/********************
+ * DAILY CHECK (OPTIONAL)
+ ********************/
+function dailyCheck() {
+  const sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  const today = new Date();
+
+  for (let i = 1; i < data.length; i++) {
+    const nama = data[i][1];
+    const qty = data[i][4];
+    const min = data[i][6];
+    const exp = data[i][7];
+
+    if (qty <= min) {
+      sendMessage(ADMIN_CHAT_ID, `⚠️ ${nama} stok hampir habis`);
+    }
+    if (exp && (new Date(exp) - today) / 86400000 <= 7) {
+      sendMessage(ADMIN_CHAT_ID, `⏳ ${nama} expire < 7 hari`);
+    }
+  }
+}
