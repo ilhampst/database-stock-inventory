@@ -1,9 +1,9 @@
 /********************
  * CONFIG
  ********************/
-const TOKEN = "8503041876:AAG2BnQeZ01_RFD0CcB4ial48LyZZc3fII0";
+const TOKEN = "PASTE YOUR TOKEN HERE";
 const SHEET_NAME = "inventory";
-const ADMIN_CHAT_ID = 1766724; // GANTI DENGAN CHAT ID KAMU
+const ADMIN_CHAT_ID = THIS IS YOUR ID; // GANTI DENGAN CHAT ID KAMU
 
 /********************
  * ENTRY POINT
